@@ -124,18 +124,18 @@ runs:
       id: get-comment-id
       shell: bash
       run: |
-        response=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
-          -s "https://api.github.com/repos/gabrielpenteado/html/issues/4/comments")
-        echo "Response: $response"  
-        comment_id=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
-          -s "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
-          jq -r '.[] | select(.body | contains("DEPLOY_PREVIEW_URL")) | .id')
+        # response=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
+          # -s "https://api.github.com/repos/gabrielpenteado/html/issues/4/comments")
+        # echo "Response: $response"  
+         comment_id=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
+           -s "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
+           jq -r '.[] | select(.body | contains("DEPLOY_PREVIEW_URL")) | .id')
 
-        if [ -z "$comment_id" ]; then
-          echo "No existing comment found. Will add a new one."
-        else
-          echo "COMMENT_ID=$comment_id" >> $GITHUB_ENV
-        fi
+         if [ -z "$comment_id" ]; then
+           echo "No existing comment found. Will add a new one."
+         else
+           echo "COMMENT_ID=$comment_id" >> $GITHUB_ENV
+         fi
       env:
         GH_TOKEN: ${{ env.GH_TOKEN }}
 
