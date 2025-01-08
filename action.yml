@@ -1,0 +1,156 @@
+name: "Deploy to Cloudflare with Preview URL"
+description: "Deploy a React, Vue, or Angular project to Cloudflare Pages and create a preview deployment comment in the PR."
+inputs:
+  CF_PROJECT_NAME:
+    description: "The name of your project"
+    required: true
+    default: ${{ github.repository }}
+  NODE_VERSION:
+    description: "The Node.js version to be used"
+    required: true
+    default: "20"
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.NODE_VERSION }}
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        if [ -f "package.json"]; then
+          npm install
+        fi
+
+    - name: Build frontend
+      shell: bash
+      run: |
+        if [ -f "package.json" ]; then
+          if grep -q "react" package.json || grep -q "vue" package.json || grep -q "vite" package.json || grep -q "svelte" package.json; then
+            npm run build
+          elif grep -q "angular" package.json; then
+            npm install -g @angular/cli
+            ng build --output-path=dist
+          else
+            if [ ! -d "dist" ]; then
+              mkdir -p dist
+            fi
+
+            rsync -av --exclude='dist' ./ dist/  
+          fi
+        else
+          if [ ! -d "dist" ]; then
+            curl -fsSL https://esbuild.github.io/dl/v0.24.1 | sh
+            export PATH=$PATH:$PWD
+
+            mkdir -p dist
+
+            if ls *.js 1> /dev/null 2>&1; then
+              esbuild "*.js" --bundle --minify --outdir=dist --platform=browser --outbase=.
+              echo "JavaScript bundled from root!"
+            elif ls **/*.js 1> /dev/null 2>&1; then
+              esbuild "**/*.js" --bundle --minify --outdir=dist --platform=browser --outbase=.
+              echo "JavaScript bundled from subdirectories!"
+            else
+              echo "No JavaScript files found, skipping JavaScript bundle."
+            fi
+
+            if ls *.css 1> /dev/null 2>&1; then
+              esbuild "*.css" --minify --outdir=dist --platform=browser --outbase=.
+              echo "CSS bundled from root!"
+            elif ls **/*.css 1> /dev/null 2>&1; then
+              esbuild "**/*.css" --minify --outdir=dist --platform=browser --outbase=.
+              echo "CSS bundled from subdirectories!"
+            else
+              echo "No CSS files found, skipping CSS bundle."
+            fi
+
+            if ls *.html 1> /dev/null 2>&1; then
+              cp *.html dist/
+              echo "HTML file copied from root!"
+            elif ls **/*.html 1> /dev/null 2>&1; then
+              find . -type f -name "*.html" -exec sh -c '
+                for html_file; do
+                  mkdir -p "dist/$(dirname "$html_file")"
+                  cp "$html_file" "dist/$html_file"
+                done
+              ' sh {} +
+            else
+              echo "No HTML files found, skipping HTML processing."
+            fi
+          fi
+        fi
+
+    - name: Create Cloudflare Pages Project
+      shell: bash
+      run: |
+        curl -X POST "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT_ID }}/pages/projects" \
+        -H "Authorization: Bearer ${{ env.CF_API_TOKEN }}" \
+        -H "Content-Type: application/json" \
+        --data '{
+          "name": "${{ env.CF_PROJECT_NAME }}",
+          "github": {
+            "owner": "${{ github.repository_owner }}",
+            "repository": "${{ github.repository }}",
+            "branch": "main"
+          },
+          "production_branch": "main"
+        }'
+      env:
+        CF_PROJECT_NAME: ${{ inputs.CF_PROJECT_NAME }}
+        CF_API_TOKEN: ${{ env.CF_API_TOKEN }}
+        CF_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
+
+    - name: Deploy to Cloudflare Pages
+      id: deploy
+      uses: cloudflare/wrangler-action@v3
+      with:
+        apiToken: ${{ env.CF_API_TOKEN }}
+        accountId: ${{ env.CF_ACCOUNT_ID }}
+        wranglerVersion: "3.80.4"
+        command: pages deploy ./dist --project-name=${{ env.CF_PROJECT_NAME }}
+      env:
+        CF_PROJECT_NAME: ${{ inputs.CF_PROJECT_NAME }}
+        CF_API_TOKEN: ${{ env.CF_API_TOKEN }}
+        CF_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
+
+    - name: Get existing deploy comment ID
+      if: github.event.pull_request.state == 'open'
+      id: get-comment-id
+      shell: bash
+      run: |
+        response=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
+          -s "https://api.github.com/repos/gabrielpenteado/html/issues/4/comments")
+        echo "Response: $response"  
+        comment_id=$(curl -H "Authorization: token ${{ env.GH_TOKEN }}" \
+          -s "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
+          jq -r '.[] | select(.body | contains("DEPLOY_PREVIEW_URL")) | .id')
+
+        if [ -z "$comment_id" ]; then
+          echo "No existing comment found. Will add a new one."
+        else
+          echo "COMMENT_ID=$comment_id" >> $GITHUB_ENV
+        fi
+      env:
+        GH_TOKEN: ${{ env.GH_TOKEN }}
+
+    - name: Update or add deploy comment to PR
+      if: github.event.pull_request.state == 'open'
+      shell: bash
+      run: |
+        if [ -n "${{ env.COMMENT_ID }}" ]; then
+          curl -X PATCH \
+            -H "Authorization: token ${{ env.GH_TOKEN }}" \
+            -d '{"body": "DEPLOY_PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}"}' \
+            https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.COMMENT_ID }}
+        else
+          gh pr comment ${{ github.event.pull_request.number }} --body "DEPLOY_PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}"
+        fi
+      env:
+        COMMENT_ID: ${{ env.COMMENT_ID }}
+        GH_TOKEN: ${{ env.GH_TOKEN }}
