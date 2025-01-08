@@ -23,7 +23,7 @@ runs:
     - name: Install dependencies
       shell: bash
       run: |
-        if [ -f "package.json"]; then
+        if [ -f "package.json" ]; then
           npm install
         fi
 
