@@ -1,4 +1,4 @@
-# Cloudflare Deploy Action
+# Cloudflare Deployment Action with PR Preview URL Comment
 
 This GitHub Action simplifies the process of deploying your frontend projects to Cloudflare Pages.  
 It automatically builds and deploys your frontend project, adding a comment with the preview URL when the PR is first opened and updating the comment every time a change is made and committed.  
